@@ -109,9 +109,6 @@ def load_aten_declarations(path):
         declaration['formals'] = [arg['type'] + ' ' + arg['name']
                                   for arg in declaration['arguments']]
         declaration['args'] = [arg['name'] for arg in declaration['arguments']]
-        declaration['type_method_formals'] = [arg['type'] + ' ' + arg['name']
-                                              for arg in declaration['arguments']]
-        declaration['type_method_args'] = [arg['name'] for arg in declaration['arguments']]
         declaration['api_name'] = declaration['name']
         # NB: keep this in sync with common_with_cwrap.py
         if declaration.get('overload_name'):
@@ -119,6 +116,8 @@ def load_aten_declarations(path):
                 declaration['name'], declaration['overload_name'])
         else:
             declaration['type_wrapper_name'] = declaration['name']
+        declaration['operator_name_with_overload'] = declaration['schema_string'].split('(')[0]
+        declaration['unqual_operator_name_with_overload'] = declaration['operator_name_with_overload'].split('::')[1]
         declaration['return_type'] = format_return_type(declaration['returns'])
 
         declaration['base_name'] = declaration['name']

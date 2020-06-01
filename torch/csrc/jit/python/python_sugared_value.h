@@ -1,9 +1,9 @@
 #pragma once
 
-#include <torch/csrc/jit/python/pybind_utils.h>
-#include <torch/csrc/jit/frontend/concrete_module_type.h>
 #include <torch/csrc/jit/api/module.h>
+#include <torch/csrc/jit/frontend/concrete_module_type.h>
 #include <torch/csrc/jit/frontend/sugared_value.h>
+#include <torch/csrc/jit/python/pybind_utils.h>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -11,7 +11,6 @@
 
 namespace torch {
 namespace jit {
-namespace script {
 
 std::string typeString(py::handle h);
 
@@ -127,7 +126,7 @@ struct VISIBILITY_HIDDEN ModuleDictMethod : public SugaredValue {
   const std::string name_;
 };
 
-struct SugaredModuleDict;
+struct SugaredDict;
 
 // defines how modules/methods behave inside the script subset.
 // for now this does not have any interaction with python.
@@ -147,10 +146,20 @@ struct VISIBILITY_HIDDEN ModuleValue : public SugaredValue {
   Value* asValue(const SourceRange& loc, Function& m) override;
 
   // select an attribute on it, e.g. `this.field`
+  std::shared_ptr<SugaredValue> tryGetAttr(
+      const SourceRange& loc,
+      Function& m,
+      const std::string& field);
+
+  // select an attribute on it, e.g. `this.field`
   std::shared_ptr<SugaredValue> attr(
       const SourceRange& loc,
       Function& m,
       const std::string& field) override;
+
+  // select an attribute on it, e.g. `this.field`
+  bool hasAttr(const SourceRange& loc, Function& m, const std::string& field)
+      override;
 
   // call module.forward
   std::shared_ptr<SugaredValue> call(
@@ -163,7 +172,11 @@ struct VISIBILITY_HIDDEN ModuleValue : public SugaredValue {
         ->call(loc, caller, inputs, attributes, n_binders);
   }
 
-  std::shared_ptr<SugaredModuleDict> getSugaredModuleDict(
+  std::shared_ptr<SugaredDict> getSugaredDict(
+      const SourceRange& loc,
+      Function& m);
+
+  std::shared_ptr<SugaredDict> getSugaredNamedBufferDict(
       const SourceRange& loc,
       Function& m);
 
@@ -175,10 +188,18 @@ struct VISIBILITY_HIDDEN ModuleValue : public SugaredValue {
 
   SugaredValuePtr iter(const SourceRange& loc, Function& m) override;
 
+  std::shared_ptr<SugaredValue> getitem(
+      const SourceRange& loc,
+      Function& m,
+      Value* idx) override;
+
  private:
   Value* self_;
   std::shared_ptr<ConcreteModuleType> concreteType_;
 };
+
+bool isNamedTupleClass(const py::object& obj);
+TypePtr registerNamedTuple(const py::object& obj, const SourceRange& loc);
 
 void recurseThroughNestedModules(
     const SourceRange& loc,
@@ -186,11 +207,12 @@ void recurseThroughNestedModules(
     std::vector<SugaredValuePtr>& keys,
     std::vector<SugaredValuePtr>& values,
     std::shared_ptr<ModuleValue> self,
-    const std::string& prefix);
+    const std::string& prefix,
+    const std::string& field);
 
 // Used to support named_modules()
-struct VISIBILITY_HIDDEN SugaredModuleDict : public SugaredValue {
-  explicit SugaredModuleDict(
+struct VISIBILITY_HIDDEN SugaredDict : public SugaredValue {
+  explicit SugaredDict(
       std::shared_ptr<ModuleValue> self,
       std::shared_ptr<SugaredTupleValue> keys,
       std::shared_ptr<SugaredTupleValue> modules) {
@@ -201,6 +223,14 @@ struct VISIBILITY_HIDDEN SugaredModuleDict : public SugaredValue {
 
   std::string kind() const override {
     return "ModuleDict";
+  }
+
+  std::shared_ptr<SugaredTupleValue> getKeys() {
+    return keys_;
+  }
+
+  std::shared_ptr<SugaredTupleValue> getModules() {
+    return modules_;
   }
 
   std::shared_ptr<SugaredValue> attr(
@@ -249,10 +279,12 @@ struct VISIBILITY_HIDDEN PythonClassValue : public ClassValue {
       Function& m,
       const std::string& field) override;
 
+  bool hasAttr(const SourceRange& loc, Function& m, const std::string& field)
+      override;
+
  private:
   py::object py_type_;
 };
 
-} // namespace script
 } // namespace jit
 } // namespace torch

@@ -1,10 +1,10 @@
 #include <torch/csrc/jit/frontend/script_type_parser.h>
-#include <torch/csrc/jit/ir/ir.h>
 #include <torch/csrc/jit/frontend/parser.h>
+#include <torch/csrc/jit/ir/ir.h>
+#include <torch/custom_class.h>
 
 namespace torch {
 namespace jit {
-namespace script {
 const std::unordered_map<std::string, TypePtr>& string_to_type_lut();
 namespace {
 
@@ -180,6 +180,10 @@ TypePtr ScriptTypeParser::parseTypeFromExpr(const Expr& expr) const {
       }
     }
 
+    if (auto custom_class_type = getCustomClass(*name)) {
+      return custom_class_type;
+    }
+
     throw ErrorReport(expr) << "Unknown type name '" << *name << "'";
   }
   throw ErrorReport(expr.range())
@@ -249,6 +253,17 @@ std::vector<Argument> ScriptTypeParser::parseArgsFromDecl(
     auto param = *it;
     auto def = param.defaultValue();
     if (def.present()) {
+      if (!param.type().present()) {
+        // We require explicit type-hints for default expressions.
+        // If param doesn't have a type, we could default to "Tensor",
+        // just like what happens in the Python frontend.
+        // However here things are a bit more complicated, because
+        // default expressions are evaluated using a custom-built
+        // graph, and error messages coming out of that in case
+        // the type doesn't match the value are quite obscure.
+        throw ErrorReport(param.range())
+            << "Keyword arguments with defaults need to be type-hinted (TorchScript C++ frontend)";
+      }
       default_types.emplace_back(param.type().get());
       default_exprs.emplace_back(def.get());
     }
@@ -263,11 +278,9 @@ std::vector<Argument> ScriptTypeParser::parseArgsFromDecl(
 
     TypePtr type;
     c10::optional<int32_t> N = c10::nullopt;
-    bool is_inferred_type = false;
     if (!decl_arg.type().present()) {
       // If this param doesn't have a type, default to "tensor"
-      is_inferred_type = true;
-      type = TensorType::get();
+      type = TensorType::getInferred();
     } else {
       // BroadcastList list can only appear at the argument level
       Expr type_expr = decl_arg.type().get();
@@ -288,8 +301,7 @@ std::vector<Argument> ScriptTypeParser::parseArgsFromDecl(
         N,
         default_value,
         decl_arg.kwarg_only(),
-        /*alias_info=*/c10::nullopt,
-        is_inferred_type);
+        /*alias_info=*/c10::nullopt);
     retval.push_back(arg);
   }
   return retval;
@@ -327,34 +339,33 @@ FunctionSchema ScriptTypeParser::parseSchemaFromDef(
 c10::IValue ScriptTypeParser::parseClassConstant(const Assign& assign) {
   if (assign.lhs().kind() != TK_VAR) {
     throw ErrorReport(assign.range())
-      << "Expected to a variable for class constant";
+        << "Expected to a variable for class constant";
   }
   const auto final_type = assign.type().get();
   auto expr = assign.rhs().get();
   if (final_type.kind() != TK_SUBSCRIPT) {
     throw ErrorReport(assign.range())
-      << "Expected subscripted type for class constant";
+        << "Expected subscripted type for class constant";
   }
   auto subscript = Subscript(final_type);
   auto value_name = parseBaseTypeName(subscript.value());
   if (!value_name) {
     throw ErrorReport(subscript.value().range())
-      << "Subscripted type must be a type identifier";
+        << "Subscripted type must be a type identifier";
   }
   if (*value_name != "Final") {
     throw ErrorReport(subscript.range())
-      << "Base type must be Final for class constant";
+        << "Base type must be Final for class constant";
   }
   if (subscript.subscript_exprs().size() != 1) {
     throw ErrorReport(subscript)
-      << " expected exactly one element type but found "
-      << subscript.subscript_exprs().size();
+        << " expected exactly one element type but found "
+        << subscript.subscript_exprs().size();
   }
   auto type = *subscript.subscript_exprs().begin();
   auto default_val = evaluateDefaults(expr.range(), {type}, {expr});
   return *default_val.begin();
 }
 
-} // namespace script
 } // namespace jit
 } // namespace torch

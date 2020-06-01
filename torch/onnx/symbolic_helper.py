@@ -46,7 +46,7 @@ from functools import wraps
 # Helper functions
 # ---------------------------------------------------------------------------------
 
-# Save some builtins as locals, because we'll shadown them below
+# Save some builtins as locals, because we'll shadow them below
 _sum = sum
 
 
@@ -174,6 +174,16 @@ def _is_tensor_list(x):
 
 def _unimplemented(op, msg):
     warnings.warn("ONNX export failed on " + op + " because " + msg + " not supported")
+
+
+def _onnx_unsupported(op_name):
+    raise RuntimeError('Unsupported: ONNX export of operator {}. '
+                       'Please open a bug to request ONNX export support for the missing operator.'.format(op_name))
+
+
+def _onnx_opset_unsupported(op_name, current_opset, supported_opset):
+    raise RuntimeError('Unsupported: ONNX export of {} in '
+                       'opset {}. Please try opset version {}.'.format(op_name, current_opset, supported_opset))
 
 
 def _black_list_in_opset(name):
@@ -413,6 +423,20 @@ def _avgpool_helper(tuple_fn, padding, kernel_size, stride, divisor_override, na
     padding = tuple(tuple_fn(padding))
     return padding
 
+def assert_training_mode(op_mode, op_name):
+    global _training_mode
+    op_mode = True if op_mode == 1 else False
+    if op_mode != _training_mode:
+        op_mode = "training " if op_mode else "inference"
+        training_mode = "training " if _training_mode else "inference"
+        # setting the model mode could result in op_mode != _training_mode
+        # if the model is a FuncModule. In this case we warn the user of
+        # the state and export depending on training_mode
+        warnings.warn("ONNX export mode is set to " + training_mode +
+                      " mode, but operator " + op_name + " is set to " +
+                      op_mode + " mode. The model will be exported in " +
+                      training_mode + ", as specified by the export mode.")
+
 # ---------------------------------------------------------------------
 # ONNX operator version
 # ---------------------------------------------------------------------
@@ -461,6 +485,11 @@ def _set_operator_export_type(operator_export_type):
     global _operator_export_type
     _operator_export_type = operator_export_type
 
+_training_mode = None
+def _set_training_mode(training_mode):
+    global _training_mode
+    _training_mode = training_mode
+
 # Metaprogram symbolics for each ATen native specialized cast operator.
 # For e.g. we specify a function named `_cast_uint8_t` that instantiates an
 # ONNX cast node with `to` attribute 'UINT8'
@@ -492,8 +521,8 @@ scalar_name_to_pytorch = {
     'int64_t': 'Long',
     'int16_t': 'Short',
     'bool': 'Bool',
-    'complex64': '',
-    'complex128': ''
+    'complex64': 'ComplexFloat',
+    'complex128': 'ComplexDouble'
 }
 
 

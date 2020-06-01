@@ -1,8 +1,10 @@
 import math
-import torch
 import warnings
 import numbers
+from typing import Tuple, Optional, overload
 
+import torch
+from torch import Tensor
 from .module import Module
 from ..parameter import Parameter
 from ..utils.rnn import PackedSequence
@@ -107,7 +109,7 @@ class RNNBase(Module):
             return
 
         for w in self._flat_weights:
-            if not torch.is_tensor(w):
+            if not isinstance(w, Tensor):
                 return
         # Short-circuits if any tensor in self._flat_weights is not acceptable to cuDNN
         # or the tensors in _flat_weights are of different dtypes
@@ -115,7 +117,7 @@ class RNNBase(Module):
         first_fw = self._flat_weights[0]
         dtype = first_fw.dtype
         for fw in self._flat_weights:
-            if (not torch.is_tensor(fw.data) or not (fw.data.dtype == dtype) or
+            if (not isinstance(fw.data, Tensor) or not (fw.data.dtype == dtype) or
                     not fw.data.is_cuda or
                     not torch.backends.cudnn.is_acceptable(fw.data)):
                 return
@@ -134,10 +136,11 @@ class RNNBase(Module):
             # Note: no_grad() is necessary since _cudnn_rnn_flatten_weight is
             # an inplace operation on self._flat_weights
             with torch.no_grad():
-                torch._cudnn_rnn_flatten_weight(
-                    self._flat_weights, (4 if self.bias else 2),
-                    self.input_size, rnn.get_cudnn_mode(self.mode), self.hidden_size, self.num_layers,
-                    self.batch_first, bool(self.bidirectional))
+                if torch._use_cudnn_rnn_flatten_weight():
+                    torch._cudnn_rnn_flatten_weight(
+                        self._flat_weights, (4 if self.bias else 2),
+                        self.input_size, rnn.get_cudnn_mode(self.mode), self.hidden_size, self.num_layers,
+                        self.batch_first, bool(self.bidirectional))
 
     def _apply(self, fn):
         ret = super(RNNBase, self)._apply(fn)
@@ -287,7 +290,7 @@ class RNNBase(Module):
 
 
 class RNN(RNNBase):
-    r"""Applies a multi-layer Elman RNN with :math:`tanh` or :math:`ReLU` non-linearity to an
+    r"""Applies a multi-layer Elman RNN with :math:`\tanh` or :math:`\text{ReLU}` non-linearity to an
     input sequence.
 
 
@@ -295,12 +298,12 @@ class RNN(RNNBase):
     function:
 
     .. math::
-        h_t = \text{tanh}(W_{ih} x_t + b_{ih} + W_{hh} h_{(t-1)} + b_{hh})
+        h_t = \tanh(W_{ih} x_t + b_{ih} + W_{hh} h_{(t-1)} + b_{hh})
 
     where :math:`h_t` is the hidden state at time `t`, :math:`x_t` is
     the input at time `t`, and :math:`h_{(t-1)}` is the hidden state of the
     previous layer at time `t-1` or the initial hidden state at time `0`.
-    If :attr:`nonlinearity` is ``'relu'``, then `ReLU` is used instead of `tanh`.
+    If :attr:`nonlinearity` is ``'relu'``, then :math:`\text{ReLU}` is used instead of :math:`\tanh`.
 
     Args:
         input_size: The number of expected features in the input `x`
@@ -373,7 +376,7 @@ class RNN(RNNBase):
         All the weights and biases are initialized from :math:`\mathcal{U}(-\sqrt{k}, \sqrt{k})`
         where :math:`k = \frac{1}{\text{hidden\_size}}`
 
-    .. include:: cudnn_persistent_rnn.rst
+    .. include:: ../cudnn_persistent_rnn.rst
 
     Examples::
 
@@ -416,20 +419,20 @@ class LSTM(RNNBase):
 
     .. math::
         \begin{array}{ll} \\
-            i_t = \sigma(W_{ii} x_t + b_{ii} + W_{hi} h_{(t-1)} + b_{hi}) \\
-            f_t = \sigma(W_{if} x_t + b_{if} + W_{hf} h_{(t-1)} + b_{hf}) \\
-            g_t = \tanh(W_{ig} x_t + b_{ig} + W_{hg} h_{(t-1)} + b_{hg}) \\
-            o_t = \sigma(W_{io} x_t + b_{io} + W_{ho} h_{(t-1)} + b_{ho}) \\
-            c_t = f_t * c_{(t-1)} + i_t * g_t \\
-            h_t = o_t * \tanh(c_t) \\
+            i_t = \sigma(W_{ii} x_t + b_{ii} + W_{hi} h_{t-1} + b_{hi}) \\
+            f_t = \sigma(W_{if} x_t + b_{if} + W_{hf} h_{t-1} + b_{hf}) \\
+            g_t = \tanh(W_{ig} x_t + b_{ig} + W_{hg} h_{t-1} + b_{hg}) \\
+            o_t = \sigma(W_{io} x_t + b_{io} + W_{ho} h_{t-1} + b_{ho}) \\
+            c_t = f_t \odot c_{t-1} + i_t \odot g_t \\
+            h_t = o_t \odot \tanh(c_t) \\
         \end{array}
 
     where :math:`h_t` is the hidden state at time `t`, :math:`c_t` is the cell
-    state at time `t`, :math:`x_t` is the input at time `t`, :math:`h_{(t-1)}`
+    state at time `t`, :math:`x_t` is the input at time `t`, :math:`h_{t-1}`
     is the hidden state of the layer at time `t-1` or the initial hidden
     state at time `0`, and :math:`i_t`, :math:`f_t`, :math:`g_t`,
     :math:`o_t` are the input, forget, cell, and output gates, respectively.
-    :math:`\sigma` is the sigmoid function, and :math:`*` is the Hadamard product.
+    :math:`\sigma` is the sigmoid function, and :math:`\odot` is the Hadamard product.
 
     In a multilayer LSTM, the input :math:`x^{(l)}_t` of the :math:`l` -th layer
     (:math:`l >= 2`) is the hidden state :math:`h^{(l-1)}_t` of the previous layer multiplied by
@@ -500,7 +503,7 @@ class LSTM(RNNBase):
         All the weights and biases are initialized from :math:`\mathcal{U}(-\sqrt{k}, \sqrt{k})`
         where :math:`k = \frac{1}{\text{hidden\_size}}`
 
-    .. include:: cudnn_persistent_rnn.rst
+    .. include:: ../cudnn_persistent_rnn.rst
 
     Examples::
 
@@ -529,11 +532,13 @@ class LSTM(RNNBase):
             return hx
         return apply_permutation(hx[0], permutation), apply_permutation(hx[1], permutation)
 
+    @overload
     @torch._jit_internal._overload_method  # noqa: F811
     def forward(self, input, hx=None):  # noqa: F811
         # type: (Tensor, Optional[Tuple[Tensor, Tensor]]) -> Tuple[Tensor, Tuple[Tensor, Tensor]]
         pass
 
+    @overload
     @torch._jit_internal._overload_method  # noqa: F811
     def forward(self, input, hx=None):  # noqa: F811
         # type: (PackedSequence, Optional[Tuple[Tensor, Tensor]]) -> Tuple[PackedSequence, Tuple[Tensor, Tensor]]  # noqa
@@ -675,7 +680,7 @@ class GRU(RNNBase):
         All the weights and biases are initialized from :math:`\mathcal{U}(-\sqrt{k}, \sqrt{k})`
         where :math:`k = \frac{1}{\text{hidden\_size}}`
 
-    .. include:: cudnn_persistent_rnn.rst
+    .. include:: ../cudnn_persistent_rnn.rst
 
     Examples::
 
@@ -687,11 +692,13 @@ class GRU(RNNBase):
     def __init__(self, *args, **kwargs):
         super(GRU, self).__init__('GRU', *args, **kwargs)
 
+    @overload
     @torch._jit_internal._overload_method  # noqa: F811
     def forward(self, input, hx=None):  # noqa: F811
         # type: (Tensor, Optional[Tensor]) -> Tuple[Tensor, Tensor]
         pass
 
+    @overload
     @torch._jit_internal._overload_method  # noqa: F811
     def forward(self, input, hx=None):  # noqa: F811
         # type: (PackedSequence, Optional[Tensor]) -> Tuple[PackedSequence, Tensor]
