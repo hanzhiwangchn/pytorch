@@ -1,10 +1,10 @@
 #include <torch/csrc/jit/backends/backend_detail.h>
+
 #include <ATen/core/builtin_function.h>
 
 namespace torch {
 namespace jit {
 namespace detail {
-
 c10::FunctionSchema getPreprocessSchema() {
   c10::Argument self("self", c10::AnyType::get());
   c10::Argument mod("mod", c10::AnyType::get());
@@ -48,7 +48,6 @@ c10::FunctionSchema getExecuteSchema() {
       /*arguments=*/{self, handle, input},
       /*returns=*/{output});
 }
-
 } // namespace detail
 } // namespace jit
 } // namespace torch
